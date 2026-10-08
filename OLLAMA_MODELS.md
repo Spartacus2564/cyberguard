@@ -2,10 +2,12 @@
 
 CyberGuard uses these models when `AI_PROVIDER=ollama`:
 
-| Model | Purpose | Approximate download |
-| --- | --- | ---: |
-| `dolphin3:8b` | General analysis and summaries | 4.9 GB |
-| `AlicanKiraz0/Cybersecurity-BaronLLM_Offensive_Security_LLM_Q6_K_GGUF` | Security analysis and reasoning | 6.6 GB |
+| Model | Purpose | Approximate download | Status |
+| --- | --- | ---: | --- |
+| `dolphin3:8b` | General analysis and summaries | 4.9 GB | Installed |
+| `hf.co/AlicanKiraz0/Cybersecurity-BaronLLM_Offensive_Security_LLM_Q6_K_GGUF` | Security analysis, reasoning, and attack planning | 6.6 GB | Not installed yet |
+
+BaronLLM is a public (MIT-licensed) Llama-3.1-8B-Instruct fine-tune for offensive security, distributed as a Q6_K GGUF.
 
 ## Install
 
@@ -15,17 +17,17 @@ Pull the general model from the Ollama Library:
 ollama pull dolphin3:8b
 ```
 
-The security model is hosted on Hugging Face and is not an Ollama Library tag. Accept the model's access conditions on Hugging Face, then run it through Ollama's Hugging Face integration:
+Pull the security model through Ollama's Hugging Face integration. The `hf.co/` prefix is part of the model tag and must be included:
 
 ```powershell
-ollama run hf.co/AlicanKiraz0/Cybersecurity-BaronLLM_Offensive_Security_LLM_Q6_K_GGUF
+ollama pull hf.co/AlicanKiraz0/Cybersecurity-BaronLLM_Offensive_Security_LLM_Q6_K_GGUF
 ```
 
-If Hugging Face denies access, follow the model repository's instructions for granting Ollama access to the gated files.
+Until BaronLLM is installed, the engine falls back to the general model for security analysis (logged at startup as `Security model ... not found`). The previously used `hf.co/Mungert/Foundation-Sec-8B-Instruct-GGUF:Q4_K_M` and `xploiter/pentester:latest` are also installed and can be substituted via `.env` if needed.
 
 ## Configure CyberGuard
 
-The Ollama Hugging Face tag includes the `hf.co/` prefix. Set the security and reasoning model names to that installed tag in the server `.env` file:
+The code defaults already use the full `hf.co/` tag, so no `.env` overrides are required once the models are installed. To override:
 
 ```dotenv
 AI_PROVIDER=ollama
@@ -34,7 +36,7 @@ SECURITY_MODEL=hf.co/AlicanKiraz0/Cybersecurity-BaronLLM_Offensive_Security_LLM_
 REASONING_MODEL=hf.co/AlicanKiraz0/Cybersecurity-BaronLLM_Offensive_Security_LLM_Q6_K_GGUF
 ```
 
-The current config defaults use the bare Hugging Face repository name for `SECURITY_MODEL` and `REASONING_MODEL`; override them as above so they match the Ollama tag. Confirm both models are installed with:
+Confirm both models are installed with:
 
 ```powershell
 ollama list
