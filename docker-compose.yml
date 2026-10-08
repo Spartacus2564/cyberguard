@@ -1,0 +1,90 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    networks:
+      - cyberguard-net
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cyberguard}
+      POSTGRES_USER: ${POSTGRES_USER:-cyberguard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cyberguard_dev_password}
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-cyberguard} -d ${POSTGRES_DB:-cyberguard}']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - cyberguard-net
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  app:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - '3001:3001'
+    deploy:
+      resources:
+        limits:
+          cpus: '2.5'
+          memory: 2560M
+        reservations:
+          cpus: '1.0'
+          memory: 512M
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cyberguard}:${POSTGRES_PASSWORD:-cyberguard_dev_password}@postgres:5432/${POSTGRES_DB:-cyberguard}
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:?Please set JWT_SECRET environment variable}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      PORT: 3001
+      NODE_ENV: ${NODE_ENV:-production}
+      NODE_OPTIONS: "--max-old-space-size=2048"
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
+      PORT_SCAN_ENABLED: ${PORT_SCAN_ENABLED:-false}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-500}
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      AI_MODEL: ${AI_MODEL:-dolphin3:8b}
+      SECURITY_MODEL: ${SECURITY_MODEL:-xploiter/pentester}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-180000}
+    volumes:
+      - report_data:/app/reports
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - cyberguard-net
+    stop_grace_period: 120s
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://localhost:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  postgres_data:
+  redis_data:
+  report_data:
+
+networks:
+  cyberguard-net:
+    driver: bridge

@@ -1,0 +1,589 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CYBERGUARD — AUTONOMOUS SECURITY VALIDATION PLATFORM
+// ═══════════════════════════════════════════════════════════════════════════════
+
+enum UserRole {
+  ADMIN
+  MEMBER
+}
+
+enum AssessmentStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum FindingSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum ScanJobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum EngagementStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum AssetType {
+  DOMAIN
+  IP
+  CIDR
+  URL
+  API_ENDPOINT
+  CLOUD_RESOURCE
+}
+
+enum ValidationStatus {
+  DISCOVERED
+  VALIDATED
+  CONFIRMED_IMPACT
+  FALSE_POSITIVE
+  NOT_EXPLOITABLE
+}
+
+enum HypothesisStatus {
+  PROPOSED
+  TESTING
+  CONFIRMED
+  REFUTED
+  ABANDONED
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CORE MODELS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users       User[]
+  assets      Asset[]
+  assessments Assessment[]
+  reports     Report[]
+  engagements Engagement[]
+}
+
+model User {
+  id             String   @id @default(uuid()) @db.Uuid
+  email          String   @unique
+  passwordHash   String
+  firstName      String
+  lastName       String
+  role           UserRole @default(MEMBER)
+  organizationId String   @db.Uuid
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model Asset {
+  id             String   @id @default(uuid()) @db.Uuid
+  domain         String
+  organizationId String   @db.Uuid
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assessments   Assessment[]
+
+  @@unique([domain, organizationId])
+  @@index([organizationId])
+}
+
+model Assessment {
+  id             String           @id @default(uuid()) @db.Uuid
+  domain         String
+  status         AssessmentStatus @default(PENDING)
+  riskScore      Float?
+  organizationId String           @db.Uuid
+  assetId        String?          @db.Uuid
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  completedAt    DateTime?
+  startedAt      DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  asset        Asset?       @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  findings     Finding[]
+  report       Report?
+  scanJobs     ScanJob[]
+  screenshots  Screenshot[]
+  schedules    ScanSchedule[]
+  fixPRs       FixPR[]
+  reviews      Review[]
+  evidences    Evidence[]
+
+  @@index([organizationId])
+  @@index([assetId])
+  @@index([status])
+}
+
+model Finding {
+  id               String             @id @default(uuid()) @db.Uuid
+  assessmentId     String             @db.Uuid
+  title            String
+  description      String
+  severity         FindingSeverity
+  category         String
+  cvssScore        Float?
+  affectedAsset    String
+  evidence         String             @db.Text
+  impact           String             @db.Text
+  remediation      String             @db.Text
+  references       String             @db.Text
+  compliance       String?
+  detectedAt       DateTime
+  validationStatus ValidationStatus   @default(DISCOVERED)
+  validatedAt      DateTime?
+  validatedBy      String?
+  validationNotes  String?            @db.Text
+  createdAt        DateTime           @default(now())
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  evidences  Evidence[]
+
+  @@index([assessmentId])
+  @@index([severity])
+  @@index([category])
+  @@index([validationStatus])
+}
+
+model Report {
+  id              String   @id @default(uuid()) @db.Uuid
+  assessmentId    String   @db.Uuid
+  organizationId  String   @db.Uuid
+  content         String   @db.Text
+  pdfPath         String?
+  executiveSummary String? @db.Text
+  createdAt       DateTime @default(now())
+
+  assessment   Assessment   @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([assessmentId])
+  @@index([organizationId])
+}
+
+model ScanJob {
+  id             String       @id @default(uuid()) @db.Uuid
+  assessmentId   String       @db.Uuid
+  status         ScanJobStatus @default(QUEUED)
+  modulesToRun   String       @db.Text
+  currentModule  String?
+  progress       Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@index([assessmentId])
+  @@index([status])
+}
+
+model AuditLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String?  @db.Uuid
+  organizationId String?  @db.Uuid
+  action         String
+  resource       String?
+  resourceId     String?
+  details        String?  @db.Text
+  ipAddress      String?
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model Screenshot {
+  id             String   @id @default(uuid()) @db.Uuid
+  assessmentId   String   @db.Uuid
+  url            String
+  domain         String
+  screenshotPath String
+  title          String?
+  statusCode     Int?
+  technologies   String?  @db.Text
+  securityHeaders String? @db.Text
+  createdAt      DateTime @default(now())
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@index([assessmentId])
+  @@index([domain])
+}
+
+model ScanSchedule {
+  id             String   @id @default(uuid()) @db.Uuid
+  assessmentId   String   @db.Uuid @unique
+  domain         String
+  organizationId String   @db.Uuid
+  interval       String
+  enabled        Boolean  @default(true)
+  lastRun        DateTime?
+  nextRun        DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([enabled])
+}
+
+model FixPR {
+  id             String   @id @default(uuid()) @db.Uuid
+  assessmentId   String   @db.Uuid
+  title          String
+  description    String   @db.Text
+  branch         String
+  changes        String   @db.Text
+  status         String   @default("pending")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@index([assessmentId])
+  @@index([status])
+}
+
+model Review {
+  id             String   @id @default(uuid()) @db.Uuid
+  findingId      String   @db.Uuid
+  assessmentId   String   @db.Uuid
+  reviewerId     String?  @db.Uuid
+  reviewerName   String?
+  status         String   @default("pending")
+  comment        String?  @db.Text
+  reason         String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@index([findingId])
+  @@index([assessmentId])
+  @@index([status])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENGAGEMENT & SCOPE — The autonomous platform's top-level entity
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model Engagement {
+  id             String           @id @default(uuid()) @db.Uuid
+  name           String
+  domain         String?          @db.Text
+  description    String?          @db.Text
+  status         EngagementStatus @default(DRAFT)
+  organizationId String           @db.Uuid
+  startedAt      DateTime?
+  completedAt    DateTime?
+  config         String?          @db.Text  // JSON: maxDepth, maxModules, aiEnabled, etc.
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scopeRules      ScopeRule[]
+  discoveredAssets DiscoveredAsset[]
+  discoveredServices DiscoveredService[]
+  attackPaths     AttackPath[]
+  hypotheses      Hypothesis[]
+  toolExecutions  ToolExecution[]
+  knowledge       EngagementKnowledge[]
+
+  @@index([organizationId])
+  @@index([status])
+}
+
+model ScopeRule {
+  id           String    @id @default(uuid()) @db.Uuid
+  engagementId String    @db.Uuid
+  type         String    // "allow" or "deny"
+  targetType   String    // "domain", "cidr", "ip", "url", "regex"
+  value        String    @db.Text  // The actual rule value: "example.com", "10.0.0.0/8", etc.
+  description  String?
+  createdAt    DateTime  @default(now())
+
+  engagement Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId])
+  @@index([engagementId, type])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DISCOVERED ASSETS — Tracked inventory from reconnaissance
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model DiscoveredAsset {
+  id           String    @id @default(uuid()) @db.Uuid
+  engagementId String    @db.Uuid
+  type         AssetType
+  value        String    // "example.com", "192.168.1.1", "10.0.0.0/24"
+  parentId     String?   @db.Uuid  // Parent asset (e.g., subdomain → domain)
+  metadata     String?   @db.Text  // JSON: OS, tech stack, notes
+  discoveredAt DateTime  @default(now())
+  lastSeenAt   DateTime  @default(now())
+
+  engagement  Engagement        @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  services    DiscoveredService[]
+  parentNode  DiscoveredAsset?  @relation("AssetHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children    DiscoveredAsset[] @relation("AssetHierarchy")
+
+  @@unique([engagementId, type, value])
+  @@index([engagementId])
+  @@index([type])
+}
+
+model DiscoveredService {
+  id              String   @id @default(uuid()) @db.Uuid
+  assetId         String   @db.Uuid
+  engagementId    String   @db.Uuid
+  port            Int
+  protocol        String   // "tcp", "udp"
+  service         String   // "http", "ssh", "smb", etc.
+  version         String?
+  banner          String?  @db.Text
+  state           String   @default("open")  // "open", "filtered", "closed"
+  discoveredAt    DateTime @default(now())
+
+  asset         DiscoveredAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  engagement    Engagement      @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([assetId])
+  @@index([engagementId])
+  @@index([port])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ATTACK GRAPH — Nodes, edges, and paths
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model AttackPath {
+  id           String   @id @default(uuid()) @db.Uuid
+  engagementId String   @db.Uuid
+  title        String
+  description  String?  @db.Text
+  riskScore    Float    @default(0)
+  confidence   Float    @default(0)
+  pathLength   Int      @default(0)
+  entryPoint   String   // Starting asset/service
+  impactPoint  String   // What can be reached
+  impactLevel  String   // "CRITICAL", "HIGH", "MEDIUM", "LOW"
+  validated    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  engagement Engagement      @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  nodes      AttackPathNode[]
+  edges      AttackPathEdge[]
+
+  @@index([engagementId])
+  @@index([riskScore(sort: Desc)])
+}
+
+model AttackPathNode {
+  id            String  @id @default(uuid()) @db.Uuid
+  attackPathId  String  @db.Uuid
+  nodeType      String  // "asset", "service", "vulnerability", "credential", "identity", "permission", "session"
+  label         String  // Human-readable label: "Web Server (port 443)"
+  assetValue    String? // Reference to discovered asset/service
+  vulnerability String? // Title of vulnerability at this node
+  evidence      String? @db.Text
+  metadata      String? @db.Text  // JSON: additional context
+  positionX     Float?  // For graph visualization
+  positionY     Float?
+
+  attackPath AttackPath @relation(fields: [attackPathId], references: [id], onDelete: Cascade)
+
+  @@index([attackPathId])
+  @@index([nodeType])
+}
+
+model AttackPathEdge {
+  id           String  @id @default(uuid()) @db.Uuid
+  attackPathId String  @db.Uuid
+  sourceNodeId String  @db.Uuid
+  targetNodeId String  @db.Uuid
+  edgeType     String  // "exploits", "leads_to", "escalates_to", "accesses", "discovers"
+  label        String  // "SQL injection on login form"
+  evidence     String? @db.Text
+  confidence   Float   @default(0.5)
+  metadata     String? @db.Text  // JSON: attack technique, MITRE ATT&CK ID
+
+  attackPath AttackPath @relation(fields: [attackPathId], references: [id], onDelete: Cascade)
+
+  @@index([attackPathId])
+  @@index([sourceNodeId])
+  @@index([targetNodeId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EVIDENCE — Structured evidence per finding and attack path
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model Evidence {
+  id           String   @id @default(uuid()) @db.Uuid
+  findingId    String?  @db.Uuid
+  assessmentId String   @db.Uuid
+  type         String   // "http_request", "command_output", "screenshot", "tool_output", "manual"
+  title        String
+  content      String   @db.Text
+  contentType  String?  // "text/plain", "application/json", "text/html"
+  metadata     String?  @db.Text  // JSON: request headers, response code, etc.
+  createdAt    DateTime @default(now())
+
+  finding    Finding?   @relation(fields: [findingId], references: [id], onDelete: SetNull)
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@index([findingId])
+  @@index([assessmentId])
+  @@index([type])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TOOL EXECUTION — Audit trail of every tool invocation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model ToolExecution {
+  id           String   @id @default(uuid()) @db.Uuid
+  engagementId String   @db.Uuid
+  toolName     String   // "nmap", "nuclei", "nikto", etc.
+  category     String   // "recon", "vuln_scan", "exploitation", "enumeration"
+  command      String   @db.Text  // The actual command executed
+  target       String   // What was targeted
+  status       String   // "queued", "running", "completed", "failed", "timeout"
+  exitCode     Int?
+  stdout       String?  @db.Text
+  stderr       String?  @db.Text
+  findingsCount Int     @default(0)
+  durationMs   Int?
+  startedAt    DateTime @default(now())
+  completedAt  DateTime?
+  error        String?  @db.Text
+
+  engagement Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId])
+  @@index([toolName])
+  @@index([status])
+  @@index([startedAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HYPOTHESIS — AI reasoning about attack paths
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model Hypothesis {
+  id           String           @id @default(uuid()) @db.Uuid
+  engagementId String           @db.Uuid
+  hypothesis   String           @db.Text  // "The web app has SQL injection on the login form"
+  reasoning    String           @db.Text  // Why this hypothesis makes sense
+  confidence   Float            @default(0.5)
+  status       HypothesisStatus @default(PROPOSED)
+  testAction   String?          @db.Text  // What authorized test to perform
+  testResult   String?          @db.Text  // Outcome of the test
+  evidence     String?          @db.Text  // Evidence gathered
+  parentHypothesisId String?    @db.Uuid  // Chained hypotheses
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  engagement         Engagement?  @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  parentHypothesis   Hypothesis?  @relation("HypothesisChain", fields: [parentHypothesisId], references: [id], onDelete: SetNull)
+  childHypotheses    Hypothesis[] @relation("HypothesisChain")
+
+  @@index([engagementId])
+  @@index([status])
+  @@index([confidence(sort: Desc)])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENGAGEMENT KNOWLEDGE — Persistent knowledge base per engagement
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model EngagementKnowledge {
+  id           String   @id @default(uuid()) @db.Uuid
+  engagementId String   @db.Uuid
+  category     String   // "asset", "vulnerability", "credential", "identity", "relationship", "attempt"
+  key          String   // Unique key within category: "host:192.168.1.1", "user:admin"
+  value        String   @db.Text  // JSON: the knowledge data
+  confidence   Float    @default(1.0)
+  source       String?  // Which tool/agent discovered this
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  engagement Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@unique([engagementId, category, key])
+  @@index([engagementId])
+  @@index([category])
+}
+
+model ScanProfile {
+  id           String   @id @default(uuid())
+  name         String
+  description  String?
+  modules      Json
+  isDefault    Boolean  @default(false)
+  organization String
+  createdBy    String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([organization])
+}
+
+model StoredCredential {
+  id               String   @id @default(uuid())
+  engagementId     String
+  name             String
+  type             String
+  username         String?
+  password         String?
+  cookies          String?
+  headers          Json?
+  loginUrl         String?
+  loginSelector    String?
+  passwordSelector String?
+  submitSelector   String?
+  successIndicator String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([engagementId])
+}

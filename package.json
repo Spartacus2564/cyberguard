@@ -1,0 +1,21 @@
+{
+  "name": "cyberguard",
+  "version": "1.0.0",
+  "description": "CyberGuard - Automated External Cybersecurity Assessment Platform",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "build": "cd server && npm run build && cd ../client && npm run build",
+    "start": "cd server && npm start",
+    "test": "cd server && npm test",
+    "migrate": "cd server && npx prisma migrate dev",
+    "seed": "cd server && npm run seed",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
