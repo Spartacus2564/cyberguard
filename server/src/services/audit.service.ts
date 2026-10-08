@@ -1,6 +1,10 @@
 import prisma from '../lib/prisma';
 import logger from '../utils/logger';
 
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
+const MAX_OFFSET = 100_000;
+
 export interface AuditLogData {
   userId?: string;
   organizationId?: string;
@@ -34,7 +38,15 @@ export async function getAuditLogs(
   organizationId: string,
   options: { limit?: number; offset?: number; action?: string } = {}
 ) {
-  const { limit = 50, offset = 0, action } = options;
+  const requestedLimit = options.limit ?? DEFAULT_LIMIT;
+  const requestedOffset = options.offset ?? 0;
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(MAX_LIMIT, Math.max(1, Math.trunc(requestedLimit)))
+    : DEFAULT_LIMIT;
+  const offset = Number.isFinite(requestedOffset)
+    ? Math.min(MAX_OFFSET, Math.max(0, Math.trunc(requestedOffset)))
+    : 0;
+  const action = options.action?.trim();
 
   const where: any = { organizationId };
   if (action) where.action = action;
@@ -42,7 +54,7 @@ export async function getAuditLogs(
   const [logs, total] = await Promise.all([
     prisma.auditLog.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit,
       skip: offset,
     }),

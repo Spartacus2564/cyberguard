@@ -503,7 +503,8 @@ function deduplicateFindings(results: ScanResult[]): ScanResult[] {
   for (const result of results) {
     const dedupedFindings: Finding[] = [];
     for (const finding of result.findings) {
-      const key = `${finding.title.toLowerCase().trim()}::${finding.category?.toLowerCase().trim() || ''}`;
+      const asset = finding.affectedAsset?.trim().toLowerCase() || '';
+      const key = `${finding.title.toLowerCase().trim()}::${finding.category?.toLowerCase().trim() || ''}::${asset}`;
       if (!seen.has(key)) {
         seen.set(key, finding);
         dedupedFindings.push(finding);

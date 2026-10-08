@@ -3,21 +3,6 @@ import { config } from '../config';
 import logger from '../utils/logger';
 import { MidScanInsight } from '../engine';
 import { 
-  PreExploitChecklist,
-  ChecklistContext,
-  TargetType,
-  ChecklistPhase,
-  ChecklistItem,
-  AttackSurfaceTarget,
-  AttackVector,
-  PriorityVector,
-  AttackSurfaceMap,
-  DetectedService,
-  Credential,
-  NetworkSegment,
-  HostInfo
-} from '../services/reasoningTypes';
-import { 
   AttackGraphContext, AttackGraph, AttackGraphNode, AttackGraphEdge, AttackGraphPath, MitreCoverage,
   ReasoningContext, ReasoningResult, ReasoningAction, Hypothesis, PivotOpportunity,
   PivotContext, PivotChain, PivotStep,
@@ -437,6 +422,7 @@ class OpenAICompatibleProvider implements AIProvider {
   private timeout: number;
   private fallback: TemplateProvider;
   private available: boolean | null = null;
+  private availableUntil = 0;
 
   constructor() {
     this.baseUrl = config.aiBaseUrl || 'https://openrouter.ai/api/v1';
@@ -448,8 +434,12 @@ class OpenAICompatibleProvider implements AIProvider {
   }
 
   async isAvailable(): Promise<boolean> {
-    if (this.available !== null) return this.available;
-    if (!this.apiKey) { this.available = false; return false; }
+    if (this.available !== null && Date.now() < this.availableUntil) return this.available;
+    if (!this.apiKey) {
+      this.available = false;
+      this.availableUntil = Date.now() + 5000;
+      return false;
+    }
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5000);
@@ -459,10 +449,12 @@ class OpenAICompatibleProvider implements AIProvider {
       });
       clearTimeout(timer);
       this.available = res.ok;
+      this.availableUntil = Date.now() + (res.ok ? 60000 : 5000);
       if (this.available) logger.info(`[AI] OpenAI-compatible endpoint available at ${this.baseUrl}`);
       else logger.info(`[AI] OpenAI-compatible endpoint returned ${res.status}`);
     } catch {
       this.available = false;
+      this.availableUntil = Date.now() + 5000;
       logger.info('[AI] OpenAI-compatible endpoint not reachable');
     }
     return this.available;
@@ -494,6 +486,10 @@ class OpenAICompatibleProvider implements AIProvider {
     } catch {
       return '';
     }
+  }
+
+  async completePrompt(prompt: string): Promise<string> {
+    return this.chatCompletion([{ role: 'user', content: prompt }]);
   }
 
   async summarize(text: string): Promise<string> {
@@ -749,6 +745,8 @@ class OllamaProvider implements AIProvider {
   private securityModelAvailable: boolean | null = null;
   private generalModelAvailable: boolean | null = null;
   private reasoningModelAvailable: boolean | null = null;
+  private availableUntil = 0;
+  private modelAvailabilityUntil = 0;
   // AI Response Cache with TTL
   private responseCache: Map<string, { data: unknown; expires: number }> = new Map();
   private readonly CACHE_TTL = 30 * 60 * 1000; // 30 minutes
@@ -807,10 +805,11 @@ class OllamaProvider implements AIProvider {
   }
 
   private async isAvailable(): Promise<boolean> {
-    if (this.available !== null) return this.available;
+    if (this.available !== null && Date.now() < this.availableUntil) return this.available;
     try {
       const res = await fetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
       this.available = res.ok;
+      this.availableUntil = Date.now() + (res.ok ? 30000 : 5000);
       if (this.available) {
         logger.info(`[AI] Ollama connected, generalModel: ${this.generalModel}, securityModel: ${this.securityModel}`);
       } else {
@@ -819,69 +818,78 @@ class OllamaProvider implements AIProvider {
       return this.available;
     } catch {
       this.available = false;
+      this.availableUntil = Date.now() + 5000;
       logger.info('[AI] Ollama not reachable, falling back to AI provider');
       return false;
     }
   }
 
   private async isSecurityModelAvailable(): Promise<boolean> {
-    if (this.securityModelAvailable !== null) return this.securityModelAvailable;
+    if (this.securityModelAvailable !== null && Date.now() < this.modelAvailabilityUntil) return this.securityModelAvailable;
     try {
       const res = await fetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
-      if (!res.ok) { this.securityModelAvailable = false; return false; }
+      if (!res.ok) { this.securityModelAvailable = false; this.modelAvailabilityUntil = Date.now() + 30000; return false; }
       const data = await res.json() as { models?: Array<{ name: string }> };
       const models = (data.models || []).map(m => m.name);
       this.securityModelAvailable = models.some(m =>
         m === this.securityModel || m.startsWith(this.securityModel + ':')
       );
+      this.modelAvailabilityUntil = Date.now() + 30000;
       if (this.securityModelAvailable) logger.info(`[AI] Security model available: ${this.securityModel}`);
       else logger.info(`[AI] Security model ${this.securityModel} not found, using general model for security analysis`);
       return this.securityModelAvailable;
     } catch {
       this.securityModelAvailable = false;
+      this.modelAvailabilityUntil = Date.now() + 30000;
       return false;
     }
   }
 
   private async isGeneralModelAvailable(): Promise<boolean> {
-    if (this.generalModelAvailable !== null) return this.generalModelAvailable;
+    if (this.generalModelAvailable !== null && Date.now() < this.modelAvailabilityUntil) return this.generalModelAvailable;
     try {
       const res = await fetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
-      if (!res.ok) { this.generalModelAvailable = false; return false; }
+      if (!res.ok) { this.generalModelAvailable = false; this.modelAvailabilityUntil = Date.now() + 30000; return false; }
       const data = await res.json() as { models?: Array<{ name: string }> };
       const models = (data.models || []).map(m => m.name);
       this.generalModelAvailable = models.some(m =>
         m === this.generalModel || m.startsWith(this.generalModel + ':')
       );
+      this.modelAvailabilityUntil = Date.now() + 30000;
       if (this.generalModelAvailable) logger.info(`[AI] General model available: ${this.generalModel}`);
       return this.generalModelAvailable;
     } catch {
       this.generalModelAvailable = false;
+      this.modelAvailabilityUntil = Date.now() + 30000;
       return false;
     }
   }
 
   private async isReasoningModelAvailable(): Promise<boolean> {
-    if (this.reasoningModelAvailable !== null) return this.reasoningModelAvailable;
+    if (this.reasoningModelAvailable !== null && Date.now() < this.modelAvailabilityUntil) return this.reasoningModelAvailable;
     try {
       const res = await fetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
-      if (!res.ok) { this.reasoningModelAvailable = false; return false; }
+      if (!res.ok) { this.reasoningModelAvailable = false; this.modelAvailabilityUntil = Date.now() + 30000; return false; }
       const data = await res.json() as { models?: Array<{ name: string }> };
       const models = (data.models || []).map(m => m.name);
       this.reasoningModelAvailable = models.some(m =>
         m === this.reasoningModel || m.startsWith(this.reasoningModel + ':')
       );
+      this.modelAvailabilityUntil = Date.now() + 30000;
       if (this.reasoningModelAvailable) logger.info(`[AI] Reasoning model available: ${this.reasoningModel}`);
       else logger.info(`[AI] Reasoning model ${this.reasoningModel} not found, using security model for reasoning`);
       return this.reasoningModelAvailable;
     } catch {
       this.reasoningModelAvailable = false;
+      this.modelAvailabilityUntil = Date.now() + 30000;
       return false;
     }
   }
 
   private async generate(prompt: string, options: { temperature?: number; maxTokens?: number; format?: string; retries?: number; useSecurityModel?: boolean; useGeneralModel?: boolean; useReasoningModel?: boolean; useCache?: boolean } = {}): Promise<string> {
-    if (!(await this.isAvailable())) return '';
+    if (!(await this.isAvailable())) {
+      return this.openaiFallback ? this.openaiFallback.completePrompt(prompt) : '';
+    }
 
     // Model routing: reasoning model for attack chains/planning, security model for vuln analysis, general for summaries
     let modelToUse: string;
@@ -938,7 +946,7 @@ class OllamaProvider implements AIProvider {
         if (!res.ok) {
           logger.error(`[AI] Ollama HTTP ${res.status} (model: ${modelToUse})`);
           if (attempt < maxRetries) { await new Promise(r => setTimeout(r, 2000)); continue; }
-          return '';
+          break;
         }
 
         const data = await res.json() as { response?: string };
@@ -958,11 +966,11 @@ class OllamaProvider implements AIProvider {
         if (attempt < maxRetries) await new Promise(r => setTimeout(r, 2000));
       }
     }
-    return '';
+    return this.openaiFallback ? this.openaiFallback.completePrompt(prompt) : '';
   }
 
-  private async generateJSON<T>(prompt: string, options?: { maxTokens?: number; useSecurityModel?: boolean; useGeneralModel?: boolean }): Promise<T | null> {
-    const result = await this.generate(prompt, { temperature: 0.1, format: 'json', maxTokens: options?.maxTokens, useSecurityModel: options?.useSecurityModel, useGeneralModel: options?.useGeneralModel });
+  private async generateJSON<T>(prompt: string, options?: { maxTokens?: number; useSecurityModel?: boolean; useGeneralModel?: boolean; useReasoningModel?: boolean }): Promise<T | null> {
+    const result = await this.generate(prompt, { temperature: 0.1, format: 'json', maxTokens: options?.maxTokens, useSecurityModel: options?.useSecurityModel, useGeneralModel: options?.useGeneralModel, useReasoningModel: options?.useReasoningModel });
     if (!result) return null;
     try {
       // Find JSON object in response (models sometimes add text before/after)
@@ -974,8 +982,8 @@ class OllamaProvider implements AIProvider {
     }
   }
 
-  private async generateJSONArray<T>(prompt: string, options?: { maxTokens?: number; useSecurityModel?: boolean; useGeneralModel?: boolean }): Promise<T[] | null> {
-    const result = await this.generate(prompt, { temperature: 0.1, format: 'json', maxTokens: options?.maxTokens, useSecurityModel: options?.useSecurityModel, useGeneralModel: options?.useGeneralModel });
+  private async generateJSONArray<T>(prompt: string, options?: { maxTokens?: number; useSecurityModel?: boolean; useGeneralModel?: boolean; useReasoningModel?: boolean }): Promise<T[] | null> {
+    const result = await this.generate(prompt, { temperature: 0.1, format: 'json', maxTokens: options?.maxTokens, useSecurityModel: options?.useSecurityModel, useGeneralModel: options?.useGeneralModel, useReasoningModel: options?.useReasoningModel });
     if (!result) return null;
     try {
       const cleaned = this.stripMarkdown(result);
