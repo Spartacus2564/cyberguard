@@ -595,7 +595,37 @@ class OpenAICompatibleProvider implements AIProvider {
   }
 
   async deduplicateFindings(findings: Finding[]): Promise<Finding[]> {
-    return findings;
+    const severityOrder: Record<Severity, number> = {
+      [Severity.CRITICAL]: 0,
+      [Severity.HIGH]: 1,
+      [Severity.MEDIUM]: 2,
+      [Severity.LOW]: 3,
+      [Severity.INFO]: 4,
+    };
+    const deduplicated = new Map<string, Finding>();
+
+    for (const finding of findings) {
+      const key = [finding.title, finding.category, finding.affectedAsset]
+        .map(value => (value || '').trim().toLowerCase())
+        .join('::');
+      const existing = deduplicated.get(key);
+      if (!existing) {
+        deduplicated.set(key, finding);
+        continue;
+      }
+
+      const preferred = severityOrder[finding.severity] < severityOrder[existing.severity]
+        ? finding
+        : existing;
+      deduplicated.set(key, {
+        ...preferred,
+        evidence: (finding.evidence || '').length > (existing.evidence || '').length
+          ? finding.evidence
+          : existing.evidence,
+      });
+    }
+
+    return Array.from(deduplicated.values());
   }
 
   async adjustSeverityWithContext(findings: Finding[], context: string): Promise<Finding[]> {
@@ -677,7 +707,13 @@ class OpenAICompatibleProvider implements AIProvider {
   }
 
   async triageAndEnrichFindings(findings: Finding[], domain: string, reconContext: string): Promise<{ findings: Finding[]; chains: VulnerabilityChain[]; attackNarrative: string; remediationPlan: RemediationPhase[] }> {
-    return this.fallback.triageAndEnrichFindings(findings, domain, reconContext);
+    const deduplicated = await this.deduplicateFindings(findings);
+    const [chains, attackNarrative, remediationPlan] = await Promise.all([
+      this.analyzeVulnerabilityChains(deduplicated, domain),
+      this.generateAttackNarrative(deduplicated, domain),
+      this.generateRemediationPlan(deduplicated, domain),
+    ]);
+    return { findings: deduplicated, chains, attackNarrative, remediationPlan };
   }
 
   async scoreFindingCvss(finding: Finding): Promise<number> {

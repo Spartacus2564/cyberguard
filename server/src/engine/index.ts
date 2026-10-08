@@ -49,7 +49,8 @@ import { runCoverageTracker } from './modules/coverageTracker';
 import { runPreExploitChecklist, getDefaultChecklist } from './modules/preExploitChecklist';
 import { runFindingValidationLoop, runBatchValidation } from './modules/findingValidationLoop';
 import { 
-  initializeScanContext, 
+  initializeScanContext,
+  withScanContext,
   getScanContext, 
   setScanPhase,
   recordModuleExecution,
@@ -521,7 +522,7 @@ function deduplicateFindings(results: ScanResult[]): ScanResult[] {
   return dedupedResults;
 }
 
-export async function runAssessment(
+async function runAssessmentInContext(
   domain: string,
   modules: ScanModule[],
   onModuleStart?: (moduleName: string, index: number, total: number) => void,
@@ -899,6 +900,10 @@ export async function runAssessment(
   logger.info(`[Engine] Scan complete for ${domain}: ${finalFindings.length} findings in ${totalDur}s (${classification.primary})`);
 
   return { results: allResults, aiEnriched, aiTriageResult, classification };
+}
+
+export function runAssessment(...args: Parameters<typeof runAssessmentInContext>): ReturnType<typeof runAssessmentInContext> {
+  return withScanContext(() => runAssessmentInContext(...args));
 }
 
 export function getAvailableModules(): ScanModule[] {

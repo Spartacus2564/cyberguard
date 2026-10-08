@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { Finding, Severity, ScanResult, ScanModule } from '../../types';
 import { logInfo } from '../scanLogger';
 import { MitreCoverage } from '../../services/reasoningTypes';
@@ -227,10 +228,20 @@ export type ScanPhase = 'recon' | 'classification' | 'attack' | 'adaptive' | 'tr
 
 // ─── CONTEXT MANAGEMENT ────────────────────────────────────────────────────
 
-let globalContext: PersistentScanContext | null = null;
+const scanContextStorage = new AsyncLocalStorage<{ context: PersistentScanContext | null }>();
+let fallbackContext: PersistentScanContext | null = null;
+
+function currentContext(): PersistentScanContext | null {
+  const store = scanContextStorage.getStore();
+  return store ? store.context : fallbackContext;
+}
+
+export function withScanContext<T>(operation: () => Promise<T>): Promise<T> {
+  return scanContextStorage.run({ context: null }, operation);
+}
 
 export function initializeScanContext(domain: string, targetType: string, ip: string, scanId: string): PersistentScanContext {
-  globalContext = {
+  const context: PersistentScanContext = {
     domain,
     targetType,
     ip,
@@ -262,23 +273,25 @@ export function initializeScanContext(domain: string, targetType: string, ip: st
     currentPhase: 'recon',
   };
   
+  const store = scanContextStorage.getStore();
+  if (store) store.context = context;
+  else fallbackContext = context;
   logInfo(MODULE_NAME, `Initialized persistent scan context for ${domain} (${scanId})`);
-  return globalContext;
+  return context;
 }
 
 export function getScanContext(): PersistentScanContext | null {
-  return globalContext;
+  return currentContext();
 }
 
 export function updateScanContext(updates: Partial<PersistentScanContext>): void {
-  if (globalContext) {
-    globalContext = { ...globalContext, ...updates };
-  }
+  const context = currentContext();
+  if (context) Object.assign(context, updates);
 }
 
 export function setScanPhase(phase: ScanPhase): void {
-  if (globalContext) {
-    globalContext.currentPhase = phase;
+  if (currentContext()) {
+    currentContext()!.currentPhase = phase;
     logInfo(MODULE_NAME, `Scan phase changed to: ${phase}`);
   }
 }
@@ -286,7 +299,7 @@ export function setScanPhase(phase: ScanPhase): void {
 // ─── SERVICE INVENTORY ────────────────────────────────────────────────────
 
 export function addServiceRecord(record: Omit<ServiceRecord, 'id' | 'discoveredAt'>): string {
-  if (!globalContext) return '';
+  if (!currentContext()) return '';
   
   const id = `svc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   const fullRecord: ServiceRecord = {
@@ -295,25 +308,25 @@ export function addServiceRecord(record: Omit<ServiceRecord, 'id' | 'discoveredA
     discoveredAt: Date.now(),
   };
   
-  globalContext.serviceInventory.push(fullRecord);
+  currentContext()!.serviceInventory.push(fullRecord);
   updateCoverageForService(fullRecord);
   logInfo(MODULE_NAME, `Added service: ${record.service} on ${record.host}:${record.port}`);
   return id;
 }
 
 export function getServicesByHost(host: string): ServiceRecord[] {
-  if (!globalContext) return [];
-  return globalContext.serviceInventory.filter(s => s.host === host);
+  if (!currentContext()) return [];
+  return currentContext()!.serviceInventory.filter(s => s.host === host);
 }
 
 export function getServicesByType(targetType: string): ServiceRecord[] {
-  if (!globalContext) return [];
-  return globalContext.serviceInventory.filter(s => s.targetType === targetType);
+  if (!currentContext()) return [];
+  return currentContext()!.serviceInventory.filter(s => s.targetType === targetType);
 }
 
 export function markServiceTested(serviceId: string, module: ScanModule, findingId?: string): void {
-  if (!globalContext) return;
-  const service = globalContext.serviceInventory.find(s => s.id === serviceId);
+  if (!currentContext()) return;
+  const service = currentContext()!.serviceInventory.find(s => s.id === serviceId);
   if (service) {
     service.tested = true;
     if (findingId && !service.vulnerabilities.includes(findingId)) {
@@ -324,9 +337,9 @@ export function markServiceTested(serviceId: string, module: ScanModule, finding
 }
 
 function updateCoverageForService(service: ServiceRecord): void {
-  if (!globalContext) return;
+  if (!currentContext()) return;
   
-  const tracker = globalContext.coverageTracker;
+  const tracker = currentContext()!.coverageTracker;
   const technique = service.attackSurface[0] || 'unknown';
   
   let vector = tracker.vectors.find(v => v.technique === technique && v.category === service.targetType);
@@ -367,7 +380,7 @@ function updateCoverageForService(service: ServiceRecord): void {
 // ─── CREDENTIAL STORE ────────────────────────────────────────────────────
 
 export function addCredentialRecord(record: Omit<CredentialRecord, 'id' | 'discoveredAt'>): string {
-  if (!globalContext) return '';
+  if (!currentContext()) return '';
   
   const id = `cred-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   const fullRecord: CredentialRecord = {
@@ -376,24 +389,24 @@ export function addCredentialRecord(record: Omit<CredentialRecord, 'id' | 'disco
     discoveredAt: Date.now(),
   };
   
-  globalContext.credentialStore.push(fullRecord);
+  currentContext()!.credentialStore.push(fullRecord);
   logInfo(MODULE_NAME, `Added credential: ${record.type} - ${record.username} (${record.accessLevel})`);
   return id;
 }
 
 export function getCredentialsByType(type: CredentialRecord['type']): CredentialRecord[] {
-  if (!globalContext) return [];
-  return globalContext.credentialStore.filter(c => c.type === type);
+  if (!currentContext()) return [];
+  return currentContext()!.credentialStore.filter(c => c.type === type);
 }
 
 export function getValidCredentialsForHost(host: string): CredentialRecord[] {
-  if (!globalContext) return [];
-  return globalContext.credentialStore.filter(c => c.validOn.includes(host));
+  if (!currentContext()) return [];
+  return currentContext()!.credentialStore.filter(c => c.validOn.includes(host));
 }
 
 export function markCredentialTested(credentialId: string, host: string, success: boolean): void {
-  if (!globalContext) return;
-  const cred = globalContext.credentialStore.find(c => c.id === credentialId);
+  if (!currentContext()) return;
+  const cred = currentContext()!.credentialStore.find(c => c.id === credentialId);
   if (cred) {
     if (success && !cred.validOn.includes(host)) {
       cred.validOn.push(host);
@@ -408,7 +421,7 @@ export function markCredentialTested(credentialId: string, host: string, success
 // ─── HYPOTHESIS TRACKING ──────────────────────────────────────────────────
 
 export function addHypothesis(hypothesis: Omit<Hypothesis, 'id' | 'createdAt' | 'updatedAt'>): string {
-  if (!globalContext) return '';
+  if (!currentContext()) return '';
   
   const id = `hyp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   const fullHypothesis: Hypothesis = {
@@ -418,22 +431,22 @@ export function addHypothesis(hypothesis: Omit<Hypothesis, 'id' | 'createdAt' | 
     updatedAt: Date.now(),
   };
   
-  globalContext.hypotheses.push(fullHypothesis);
+  currentContext()!.hypotheses.push(fullHypothesis);
   logInfo(MODULE_NAME, `Added hypothesis: ${hypothesis.statement} (confidence: ${hypothesis.confidence}%)`);
   return id;
 }
 
 export function updateHypothesis(hypothesisId: string, updates: Partial<Hypothesis>): void {
-  if (!globalContext) return;
-  const hyp = globalContext.hypotheses.find(h => h.id === hypothesisId);
+  if (!currentContext()) return;
+  const hyp = currentContext()!.hypotheses.find(h => h.id === hypothesisId);
   if (hyp) {
     Object.assign(hyp, updates, { updatedAt: Date.now() });
   }
 }
 
 export function addTestToHypothesis(hypothesisId: string, test: TestRecord): void {
-  if (!globalContext) return;
-  const hyp = globalContext.hypotheses.find(h => h.id === hypothesisId);
+  if (!currentContext()) return;
+  const hyp = currentContext()!.hypotheses.find(h => h.id === hypothesisId);
   if (hyp) {
     hyp.testsRun.push(test);
     hyp.updatedAt = Date.now();
@@ -450,68 +463,68 @@ export function addTestToHypothesis(hypothesisId: string, test: TestRecord): voi
 }
 
 export function getOpenHypotheses(): Hypothesis[] {
-  if (!globalContext) return [];
-  return globalContext.hypotheses.filter(h => h.status === 'open' || h.status === 'testing');
+  if (!currentContext()) return [];
+  return currentContext()!.hypotheses.filter(h => h.status === 'open' || h.status === 'testing');
 }
 
 export function getConfirmedHypotheses(): Hypothesis[] {
-  if (!globalContext) return [];
-  return globalContext.hypotheses.filter(h => h.status === 'confirmed');
+  if (!currentContext()) return [];
+  return currentContext()!.hypotheses.filter(h => h.status === 'confirmed');
 }
 
 // ─── ATTACK GRAPH ────────────────────────────────────────────────────────
 
 export function addAttackNode(node: Omit<AttackGraphNode, 'id'>): string {
-  if (!globalContext) return '';
+  if (!currentContext()) return '';
   
   const id = `node-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   const fullNode: AttackGraphNode = { ...node, id };
   
-  globalContext.attackGraph.nodes.push(fullNode);
-  globalContext.attackGraph.lastUpdated = Date.now();
+  currentContext()!.attackGraph.nodes.push(fullNode);
+  currentContext()!.attackGraph.lastUpdated = Date.now();
   return id;
 }
 
 export function addAttackEdge(edge: AttackGraphEdge): void {
-  if (!globalContext) return;
-  globalContext.attackGraph.edges.push(edge);
-  globalContext.attackGraph.lastUpdated = Date.now();
+  if (!currentContext()) return;
+  currentContext()!.attackGraph.edges.push(edge);
+  currentContext()!.attackGraph.lastUpdated = Date.now();
 }
 
 export function addCriticalPath(path: AttackGraphPath): void {
-  if (!globalContext) return;
-  globalContext.attackGraph.criticalPaths.push(path);
-  globalContext.attackGraph.lastUpdated = Date.now();
+  if (!currentContext()) return;
+  currentContext()!.attackGraph.criticalPaths.push(path);
+  currentContext()!.attackGraph.lastUpdated = Date.now();
 }
 
 export function getAttackGraph(): AttackGraphState | null {
-  return globalContext?.attackGraph || null;
+  return currentContext()?.attackGraph || null;
 }
 
 // ─── MODULE EXECUTION HISTORY ────────────────────────────────────────────
 
 export function recordModuleExecution(execution: Omit<ModuleExecution, 'startTime'>): void {
-  if (!globalContext) return;
+  if (!currentContext()) return;
   const fullExecution: ModuleExecution = {
     ...execution,
     startTime: Date.now(),
   };
-  globalContext.moduleHistory.push(fullExecution);
+  currentContext()!.moduleHistory.push(fullExecution);
 }
 
 export function getModuleHistory(): ModuleExecution[] {
-  return globalContext?.moduleHistory || [];
+  return currentContext()?.moduleHistory || [];
 }
 
 export function getCompletedModules(): ScanModule[] {
-  if (!globalContext) return [];
-  return globalContext.moduleHistory.map(m => m.module);
+  if (!currentContext()) return [];
+  return currentContext()!.moduleHistory.map(m => m.module);
 }
 
 // ─── PIVOT CHAINS ────────────────────────────────────────────────────────
 
 export function addPivotChain(chain: Omit<PivotChainState, 'id' | 'discoveredAt'>): string {
-  if (!globalContext) return '';
+  if (!currentContext()) return '';
   
   const id = `pivot-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   const fullChain: PivotChainState = {
@@ -520,21 +533,21 @@ export function addPivotChain(chain: Omit<PivotChainState, 'id' | 'discoveredAt'
     discoveredAt: Date.now(),
   };
   
-  globalContext.pivotChains.push(fullChain);
+  currentContext()!.pivotChains.push(fullChain);
   logInfo(MODULE_NAME, `Added pivot chain: ${chain.steps.length} steps, probability: ${(chain.totalProbability * 100).toFixed(0)}%`);
   return id;
 }
 
 export function updatePivotChain(chainId: string, updates: Partial<PivotChainState>): void {
-  if (!globalContext) return;
-  const chain = globalContext.pivotChains.find(c => c.id === chainId);
+  if (!currentContext()) return;
+  const chain = currentContext()!.pivotChains.find(c => c.id === chainId);
   if (chain) {
     Object.assign(chain, updates);
   }
 }
 
 export function getPivotChains(): PivotChainState[] {
-  return globalContext?.pivotChains || [];
+  return currentContext()?.pivotChains || [];
 }
 
 // ─── COVERAGE REPORTING ──────────────────────────────────────────────────
@@ -547,9 +560,9 @@ export function getCoverageReport(): {
   untestedVectors: CoverageVector[];
   topGaps: CoverageVector[];
 } | null {
-  if (!globalContext) return null;
+  if (!currentContext()) return null;
   
-  const tracker = globalContext.coverageTracker;
+  const tracker = currentContext()!.coverageTracker;
   const untested = tracker.vectors.filter(v => v.applicable && !v.tested);
   const topGaps = untested
     .sort((a, b) => b.priority - a.priority)
@@ -566,9 +579,9 @@ export function getCoverageReport(): {
 }
 
 export function getContextSummary(): string {
-  if (!globalContext) return 'No active scan context';
+  if (!currentContext()) return 'No active scan context';
   
-  const ctx = globalContext;
+  const ctx = currentContext()!;
   return `
 Scan Context Summary (${ctx.scanId})
 Domain: ${ctx.domain} (${ctx.targetType})
