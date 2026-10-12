@@ -58,6 +58,7 @@ import {
   CoverageTracker,
   initializeCoverageForTargetType,
 } from './modules/persistentScanContext';
+import { runIRScan, runIRPhase, getIRPhases, IRScanContext, IRScanResult } from './ir';
 
 // ─── MODULE RUNNERS ──────────────────────────────────────────────────────────
 // Maps module names to their runner functions. Each returns ScanResult[].
@@ -981,3 +982,13 @@ export function getModulesRun(modules: ScanModule[]): { name: string; descriptio
     .filter(m => MODULE_DESCRIPTIONS[m])
     .map(m => ({ name: m, description: MODULE_DESCRIPTIONS[m] }));
 }
+
+// ─── Incident Response Engine ───
+export { 
+  runIRScan, 
+  runIRPhase, 
+  getIRPhases,
+  type IRScanContext,
+  type IRScanResult,
+  type IRPhaseResult 
+} from './ir';
